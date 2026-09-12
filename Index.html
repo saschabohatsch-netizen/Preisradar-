@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Preisradar</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root{
+    --paper:#FAF7F0;
+    --ink:#22281F;
+    --green:#3A6B35;
+    --green-dark:#26491F;
+    --brick:#B5502F;
+    --muted:#8A8578;
+    --line:#DAD3C0;
+    --card:#FFFFFC;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Inter',system-ui,-apple-system,sans-serif;
+    line-height:1.4;
+  }
+  .price{font-family:'IBM Plex Mono',ui-monospace,monospace;}
+  header{
+    padding:20px 18px 14px;
+    border-bottom:2px solid var(--ink);
+  }
+  header h1{
+    font-family:Georgia,'Times New Roman',serif;
+    font-size:28px;
+    margin:0 0 2px;
+    letter-spacing:-0.01em;
+  }
+  header p{margin:0;color:var(--muted);font-size:14px;}
+
+  .panel{
+    padding:16px 18px;
+    border-bottom:1px dashed var(--line);
+  }
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;}
+  .row:last-child{margin-bottom:0;}
+  label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px;}
+  input[type=text]{
+    flex:1;min-width:140px;
+    padding:10px 12px;
+    border:1px solid var(--line);
+    border-radius:3px;
+    font-size:15px;
+    background:var(--card);
+    color:var(--ink);
+  }
+  input[type=range]{flex:1;accent-color:var(--green);}
+  button{
+    padding:10px 16px;
+    border:1px solid var(--ink);
+    background:var(--ink);
+    color:var(--paper);
+    border-radius:3px;
+    font-size:14px;
+    cursor:pointer;
+  }
+  button.secondary{background:transparent;color:var(--ink);}
+  button:disabled{opacity:0.5;cursor:default;}
+  .status{font-size:13px;color:var(--muted);min-height:18px;}
+
+  #map{height:220px;border-bottom:2px solid var(--ink);}
+
+  section.results{padding:16px 18px 40px;}
+  h2{
+    font-family:Georgia,'Times New Roman',serif;
+    font-size:18px;
+    margin:22px 0 10px;
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+  }
+  h2 span{font-size:12px;color:var(--muted);font-family:'Inter',sans-serif;}
+
+  .item{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    gap:10px;
+    padding:10px 0;
+    border-bottom:1px dotted var(--line);
+  }
+  .item .name{font-weight:600;}
+  .item .meta{font-size:12px;color:var(--muted);font-weight:400;}
+  .item .amount{font-weight:700;white-space:nowrap;}
+  .item.unknown .amount{color:var(--muted);font-weight:400;font-style:italic;font-size:13px;}
+  .best{position:relative;}
+  .best .name::before{
+    content:"BESTPREIS";
+    display:inline-block;
+    font-size:10px;
+    letter-spacing:0.03em;
+    background:var(--green);
+    color:#fff;
+    padding:2px 6px;
+    border-radius:2px;
+    margin-right:8px;
+    vertical-align:middle;
+    font-family:'Inter',sans-serif;
+  }
+
+  .placeholder-card{
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:14px 16px;
+    background:var(--card);
+    color:var(--muted);
+    font-size:13.5px;
+  }
+  .empty{color:var(--muted);font-size:14px;padding:10px 0;}
+  a{color:var(--green-dark);}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Preisradar</h1>
+  <p>Lebensmittel-Preise in der Nähe · MVP-Prototyp auf Basis freier APIs</p>
+</header>
+
+<div class="panel">
+  <div class="row">
+    <div style="flex:1;min-width:200px;">
+      <label>Standort</label>
+      <div class="row" style="margin:0;">
+        <input type="text" id="addressInput" placeholder="Adresse oder Ort eingeben…">
+        <button class="secondary" id="geocodeBtn">Suchen</button>
+        <button id="geoBtn">📍 Aktuelle Position</button>
+      </div>
+    </div>
+  </div>
+  <div class="row">
+    <div style="flex:1;">
+      <label>Umkreis: <span id="radiusLabel">5</span> km</label>
+      <input type="range" id="radiusSlider" min="1" max="50" value="5">
+    </div>
+  </div>
+  <div class="row">
+    <div style="flex:1;">
+      <label>Produkt</label>
+      <div class="row" style="margin:0;">
+        <input type="text" id="productInput" placeholder="z. B. Nutella, Haferflocken…">
+        <button id="searchBtn">Preis vergleichen</button>
+      </div>
+    </div>
+  </div>
+  <div class="status" id="status"></div>
+</div>
+
+<div id="map"></div>
+
+<section class="results">
+  <h2>Lokale Läden <span id="localCount"></span></h2>
+  <div id="localResults" class="empty">Standort wählen und Produkt suchen, um Ergebnisse zu sehen.</div>
+
+  <h2>Online-Shops</h2>
+  <div class="placeholder-card">
+    Noch nicht aktiv in diesem Prototyp. Laut Handbuch braucht ein echter Online-Preisvergleich
+    inkl. Versandkosten kostenpflichtige APIs (z. B. Amazon-Partnerprogramm, SerpApi) – das ist
+    vorerst zurückgestellt und folgt in einer späteren Ausbaustufe.
+  </div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const statusEl = document.getElementById('status');
+const localResultsEl = document.getElementById('localResults');
+const localCountEl = document.getElementById('localCount');
+const radiusSlider = document.getElementById('radiusSlider');
+const radiusLabel = document.getElementById('radiusLabel');
+
+let map = L.map('map').setView([51.1657, 10.4515], 6); // Deutschland
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap-Mitwirkende',
+  maxZoom: 19
+}).addTo(map);
+
+let userMarker = null;
+let storeMarkers = [];
+let currentLocation = null; // {lat, lon, label}
+
+radiusSlider.addEventListener('input', () => {
+  radiusLabel.textContent = radiusSlider.value;
+});
+
+function setStatus(msg){ statusEl.textContent = msg || ''; }
+
+function haversine(lat1, lon1, lat2, lon2){
+  const R = 6371;
+  const dLat = (lat2-lat1) * Math.PI/180;
+  const dLon = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function setLocation(lat, lon, label){
+  currentLocation = {lat, lon, label};
+  map.setView([lat, lon], 13);
+  if(userMarker) map.removeLayer(userMarker);
+  userMarker = L.marker([lat, lon], {title: 'Standort'}).addTo(map)
+    .bindPopup('Standort: ' + (label || 'gewählt')).openPopup();
+  setStatus('Standort gesetzt: ' + (label || `${lat.toFixed(4)}, ${lon.toFixed(4)}`));
+}
+
+document.getElementById('geoBtn').addEventListener('click', () => {
+  if(!window.isSecureContext){
+    setStatus('Standortabfrage ist nur über https oder wenn die Seite direkt in Claude geöffnet wird verfügbar – nicht bei einer lokal per Doppelklick geöffneten Datei. Bitte stattdessen eine Adresse eingeben.');
+    return;
+  }
+  if(!navigator.geolocation){ setStatus('Geolocation wird von diesem Browser nicht unterstützt.'); return; }
+  setStatus('Ermittle aktuelle Position…');
+  navigator.geolocation.getCurrentPosition(
+    pos => setLocation(pos.coords.latitude, pos.coords.longitude, 'aktueller Standort'),
+    err => setStatus('Standort konnte nicht ermittelt werden (' + err.message + '). Bitte Standortfreigabe im Browser prüfen oder Adresse eingeben.')
+  );
+});
+
+async function geocodeNominatim(q){
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
+  if(!res.ok) throw new Error('Nominatim: HTTP ' + res.status);
+  const data = await res.json();
+  if(!data.length) return null;
+  return {lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), label: data[0].display_name};
+}
+
+async function geocodePhoton(q){
+  const res = await fetch(`https://photon.komoot.io/api/?limit=1&q=${encodeURIComponent(q)}`);
+  if(!res.ok) throw new Error('Photon: HTTP ' + res.status);
+  const data = await res.json();
+  const f = data.features && data.features[0];
+  if(!f) return null;
+  const [lon, lat] = f.geometry.coordinates;
+  const p = f.properties;
+  const label = [p.name, p.city || p.county, p.country].filter(Boolean).join(', ');
+  return {lat, lon, label};
+}
+
+document.getElementById('geocodeBtn').addEventListener('click', async () => {
+  const q = document.getElementById('addressInput').value.trim();
+  if(!q){ setStatus('Bitte eine Adresse eingeben.'); return; }
+  setStatus('Suche Adresse…');
+  let result = null;
+  let lastError = null;
+  try{
+    result = await geocodeNominatim(q);
+  }catch(e){
+    lastError = e;
+    console.warn('Nominatim fehlgeschlagen, versuche Fallback:', e);
+  }
+  if(!result){
+    try{
+      setStatus('Erster Dienst antwortet nicht, versuche zweiten Dienst…');
+      result = await geocodePhoton(q);
+    }catch(e){
+      lastError = e;
+      console.warn('Photon fehlgeschlagen:', e);
+    }
+  }
+  if(!result){
+    setStatus('Adresse nicht gefunden. ' + (lastError ? 'Technischer Grund: ' + lastError.message : 'Bitte Schreibweise prüfen oder eine größere Stadt in der Nähe versuchen.'));
+    return;
+  }
+  setLocation(result.lat, result.lon, result.label);
+});
+
+async function fetchStoresOSM(lat, lon, radiusM){
+  const query = `[out:json][timeout:25];(
+    node["shop"~"supermarket|convenience|greengrocer|butcher|bakery|department_store|discount"](around:${radiusM},${lat},${lon});
+    way["shop"~"supermarket|convenience|greengrocer|butcher|bakery|department_store|discount"](around:${radiusM},${lat},${lon});
+  );out center tags;`;
+  const res = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    body: 'data=' + encodeURIComponent(query),
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'}
+  });
+  if(!res.ok) throw new Error('Overpass-Anfrage fehlgeschlagen (' + res.status + ')');
+  const data = await res.json();
+  return data.elements.map(el => {
+    const latc = el.lat ?? el.center?.lat;
+    const lonc = el.lon ?? el.center?.lon;
+    return {
+      osmId: el.id,
+      osmType: el.type.toUpperCase(), // NODE / WAY
+      name: el.tags?.name || el.tags?.brand || 'Unbenannter Laden',
+      shopType: el.tags?.shop,
+      lat: latc, lon: lonc
+    };
+  }).filter(s => s.lat && s.lon);
+}
+
+async function searchProductOFF(term){
+  const url = `https://world.openfoodfacts.org/cgi/search.pl?json=1&search_terms=${encodeURIComponent(term)}&search_simple=1&action=process&page_size=5&fields=code,product_name,brands`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('Produktsuche fehlgeschlagen');
+  const data = await res.json();
+  return (data.products || []).filter(p => p.code && p.product_name);
+}
+
+async function fetchPricesForCode(code){
+  const url = `https://prices.openfoodfacts.org/api/v1/prices?product_code=${encodeURIComponent(code)}&size=100&order_by=-created`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('Preisabfrage fehlgeschlagen');
+  const data = await res.json();
+  return data.items || [];
+}
+
+function clearStoreMarkers(){
+  storeMarkers.forEach(m => map.removeLayer(m));
+  storeMarkers = [];
+}
+
+document.getElementById('searchBtn').addEventListener('click', async () => {
+  const term = document.getElementById('productInput').value.trim();
+  if(!currentLocation){ setStatus('Bitte zuerst einen Standort wählen.'); return; }
+  if(!term){ setStatus('Bitte ein Produkt eingeben.'); return; }
+
+  const radiusKm = parseFloat(radiusSlider.value);
+  const radiusM = radiusKm * 1000;
+  localResultsEl.innerHTML = '';
+  localCountEl.textContent = '';
+  clearStoreMarkers();
+  setStatus('Suche Läden im Umkreis …');
+
+  try{
+    const [stores, matchedProducts] = await Promise.all([
+      fetchStoresOSM(currentLocation.lat, currentLocation.lon, radiusM),
+      searchProductOFF(term)
+    ]);
+
+    if(matchedProducts.length === 0){
+      setStatus('Kein Produkt in der Open-Food-Facts-Datenbank gefunden. Preisdaten daher nicht möglich – Läden werden trotzdem angezeigt.');
+    } else {
+      setStatus(`Produkt gefunden: "${matchedProducts[0].product_name}" (${matchedProducts[0].brands || 'Marke unbekannt'}). Lade Preisdaten …`);
+    }
+
+    let prices = [];
+    if(matchedProducts.length > 0){
+      prices = await fetchPricesForCode(matchedProducts[0].code);
+    }
+
+    // Preise nach Laden (osm_id + osm_type) zuordnen, nur innerhalb des Radius
+    const priceByStore = {};
+    prices.forEach(p => {
+      const loc = p.location;
+      if(!loc || !loc.osm_id || loc.osm_lat == null) return;
+      const dist = haversine(currentLocation.lat, currentLocation.lon, loc.osm_lat, loc.osm_lon);
+      if(dist > radiusKm) return;
+      const key = loc.osm_type + '_' + loc.osm_id;
+      if(!priceByStore[key] || p.price < priceByStore[key].price){
+        priceByStore[key] = {price: p.price, currency: p.currency, date: p.date, dist};
+      }
+    });
+
+    // Alle Läden aus Overpass mit Distanz + ggf. Preis anreichern
+    const enriched = stores.map(s => {
+      const key = s.osmType + '_' + s.osmId;
+      const dist = haversine(currentLocation.lat, currentLocation.lon, s.lat, s.lon);
+      return {...s, dist, priceInfo: priceByStore[key] || null};
+    }).sort((a,b) => {
+      if(a.priceInfo && b.priceInfo) return a.priceInfo.price - b.priceInfo.price;
+      if(a.priceInfo) return -1;
+      if(b.priceInfo) return 1;
+      return a.dist - b.dist;
+    });
+
+    // Preis-Einträge, die zu keinem Overpass-Laden passen (z. B. anderer OSM-Typ), separat mit anzeigen
+    const matchedKeys = new Set(stores.map(s => s.osmType + '_' + s.osmId));
+    const extraPriceStores = Object.entries(priceByStore)
+      .filter(([key]) => !matchedKeys.has(key))
+      .map(([key, info]) => ({name: 'Laden (nur über Preisdatenbank bekannt)', dist: info.dist, priceInfo: info, lat:null, lon:null}));
+
+    const all = [...enriched, ...extraPriceStores];
+
+    if(all.length === 0){
+      localResultsEl.innerHTML = '<div class="empty">Keine Läden im gewählten Umkreis gefunden.</div>';
+    } else {
+      localCountEl.textContent = `(${all.length} im ${radiusKm}-km-Umkreis)`;
+      const bestPrice = all.find(s => s.priceInfo);
+      localResultsEl.innerHTML = all.map(s => {
+        const isBest = bestPrice && s === bestPrice;
+        if(s.priceInfo){
+          return `<div class="item ${isBest ? 'best' : ''}">
+            <div><div class="name">${s.name}</div><div class="meta">${s.dist.toFixed(1)} km entfernt · Meldung vom ${s.priceInfo.date || 'unbekanntem Datum'}</div></div>
+            <div class="amount price">${s.priceInfo.price.toFixed(2)} ${s.priceInfo.currency || ''}</div>
+          </div>`;
+        }
+        return `<div class="item unknown">
+          <div><div class="name">${s.name}</div><div class="meta">${s.dist.toFixed(1)} km entfernt</div></div>
+          <div class="amount">Preis unbekannt</div>
+        </div>`;
+      }).join('');
+    }
+
+    // Karten-Marker
+    stores.forEach(s => {
+      const key = s.osmType + '_' + s.osmId;
+      const hasPrice = !!priceByStore[key];
+      const marker = L.circleMarker([s.lat, s.lon], {
+        radius: 7,
+        color: hasPrice ? '#3A6B35' : '#8A8578',
+        fillColor: hasPrice ? '#3A6B35' : '#8A8578',
+        fillOpacity: 0.85
+      }).addTo(map).bindPopup(
+        `<b>${s.name}</b><br>${hasPrice ? priceByStore[key].price.toFixed(2) + ' ' + priceByStore[key].currency : 'Preis unbekannt'}`
+      );
+      storeMarkers.push(marker);
+    });
+
+    setStatus(`Fertig: ${all.length} Läden im Umkreis, ${prices.length ? Object.keys(priceByStore).length : 0} davon mit bekanntem Preis.`);
+  } catch(e){
+    setStatus('Fehler: ' + e.message);
+    localResultsEl.innerHTML = '<div class="empty">Es gab einen Fehler beim Laden der Daten.</div>';
+  }
+});
+</script>
+</body>
+</html>
